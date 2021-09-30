@@ -1,0 +1,12 @@
+[book]
+authors = ["Michael Cooper"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Test Book"
+
+[output.markdown]
+
+[preprocessor.rustdoc]
+command = "target/debug/mdbook-rust-doc"
+crates = ["test_crate=test-crate"]
