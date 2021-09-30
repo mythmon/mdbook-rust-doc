@@ -1,201 +1,155 @@
-mod domain;
+use std::{convert::TryFrom, io, process, str::FromStr};
 
-use crate::domain::{CrateRoots, RustPath};
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result};
 use clap::Clap;
-use proc_macro2::TokenTree;
-use std::{convert::TryFrom, path::Path, string::ToString};
-use syn::{Attribute, Fields, FieldsNamed, Item, ItemMod, ItemStruct};
+use lazy_static::lazy_static;
+use mdbook::{
+    book::Book,
+    preprocess::{CmdPreprocessor, Preprocessor, PreprocessorContext},
+    BookItem,
+};
+use mdbook_rust_doc::{find_doc_for_item, CrateRoots, RustPath};
+use pulldown_cmark::Event;
+use regex::{Captures, Regex};
+use semver::{Version, VersionReq};
+use serde::Deserialize;
 
 #[derive(Clap, Debug)]
 struct Opts {
-    path: RustPath,
+    #[clap(subcommand)]
+    cmd: Option<SubCommand>,
+}
 
-    #[clap(short, long = "crate")]
-    crates: Vec<String>,
+#[derive(Clap, Debug)]
+enum SubCommand {
+    Supports { renderer: String },
 }
 
 fn main() -> Result<()> {
+    // let doc = find_doc_for_item(&opts.path, &crate_roots)
+    //     .context("Finding documentation")?
+    //     .ok_or_else(|| anyhow!("Item {} not found", opts.path))?;
+    // println!(
+    //     "{} doc:\n\n/// {}\n",
+    //     opts.path,
+    //     doc.replace("\n", "\n/// ")
+    // );
+    // Ok(())
+
     let opts = Opts::parse();
-    let crate_roots =
-        CrateRoots::try_from(opts.crates.clone()).context("Converting crate roots")?;
-    let doc = find_item(&opts.path, &crate_roots)
-        .context("Finding documentation")?
-        .ok_or_else(|| anyhow!("Item {} not found", opts.path))?;
-    println!(
-        "{} doc:\n\n/// {}\n",
-        opts.path,
-        doc.replace("\n", "\n/// ")
-    );
+    // let crate_roots =
+    //     CrateRoots::try_from(opts.crates.clone()).context("Converting crate roots")?;
+
+    let preprocessor = RustDocPreprocessor;
+
+    match opts.cmd {
+        Some(SubCommand::Supports { renderer }) => handle_supports(&preprocessor, &renderer),
+        None => handle_preprocessing(&preprocessor)?,
+    }
+
     Ok(())
 }
 
-fn find_item(path: &RustPath, crates: &CrateRoots) -> Result<Option<String>> {
-    let (crate_name, item_path) = path.head_tail();
-    let crate_path = crates
-        .get(crate_name)
-        .ok_or_else(|| anyhow!("Crate {} not found", crate_name))?;
-    let crate_src_dir = crate_path.join("src");
-    let attrs = find_attrs_in_crate(&crate_src_dir, &item_path)?;
-    Ok(attrs.map(attrs_to_string))
+fn handle_supports(pre: &dyn Preprocessor, renderer: &str) -> ! {
+    let supported = pre.supports_renderer(renderer);
+    // let crate_roots =
+    //     CrateRoots::try_from(opts.crates.clone()).context("Converting crate roots")?;
+    // Signal whether the renderer is supported by exiting with 1 or 0.
+    process::exit(if supported { 0 } else { 1 });
 }
 
-fn find_attrs_in_crate(
-    crate_src: &Path,
-    remaining_path: &Option<RustPath>,
-) -> Result<Option<Vec<Attribute>>> {
-    let lib_path = crate_src.join("lib.rs");
-    find_item_in_file(&lib_path, remaining_path)
-}
+fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<()> {
+    let (ctx, book) = CmdPreprocessor::parse_input(io::stdin())?;
 
-fn find_attrs_in_struct(
-    the_struct: &ItemStruct,
-    remaining_path: &Option<RustPath>,
-) -> Result<Option<Vec<Attribute>>> {
-    if let Some(remaining_path) = remaining_path {
-        let (head, tail) = remaining_path.head_tail();
-        ensure!(
-            tail.is_none(),
-            "Expected tail to be none when scanning struct. Found {:?}",
-            tail
+    let book_version = Version::parse(&ctx.mdbook_version)?;
+    let version_req = VersionReq::parse(mdbook::MDBOOK_VERSION)?;
+
+    if !version_req.matches(&book_version) {
+        eprintln!(
+            "Warning: The {} plugin was built against version {} of mdbook, \
+             but we're being called from version {}",
+            pre.name(),
+            mdbook::MDBOOK_VERSION,
+            ctx.mdbook_version
         );
-
-        let rv = match &the_struct.fields {
-            Fields::Named(FieldsNamed { named, .. }) => named
-                .iter()
-                .find(|f| f.ident.as_ref().map(ToString::to_string) == Some(head.to_string()))
-                .map(|field| field.attrs.clone()),
-
-            Fields::Unnamed(_) | Fields::Unit => None,
-        };
-
-        Ok(rv)
-    } else {
-        Ok(Some(the_struct.attrs.clone()))
     }
+
+    let processed_book = pre.run(&ctx, book)?;
+    serde_json::to_writer(io::stdout(), &processed_book)?;
+
+    Ok(())
 }
 
-fn find_attrs_in_mod(
-    parent_path: &Path,
-    the_mod: &ItemMod,
-    remaining_path: &Option<RustPath>,
-) -> Result<Option<Vec<Attribute>>> {
-    if let Some((_, items)) = &the_mod.content {
-        if let Some(remaining_path) = remaining_path {
-            let rv = items
-                .iter()
-                .map(|i| find_attrs_in_item(parent_path, i, remaining_path))
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .next()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Could not find expected item {} in {}",
-                        remaining_path,
-                        the_mod.ident
-                    )
-                })?;
-            Ok(Some(rv))
-        } else {
-            Ok(Some(the_mod.attrs.clone()))
+struct RustDocPreprocessor;
+
+impl RustDocPreprocessor {
+    fn process_item(crate_roots: &CrateRoots, item: &mut BookItem) -> Result<()> {
+        if let BookItem::Chapter(chapter) = item {
+            let mut new_content = String::with_capacity(chapter.content.len());
+
+            let parser =
+                pulldown_cmark::Parser::new_ext(&chapter.content, pulldown_cmark::Options::all());
+
+            let modified_events = parser
+                .map(|ev| match ev {
+                    Event::Text(text) => {
+                        lazy_static! {
+                            static ref DIRECTIVE_REGEX: Regex =
+                                Regex::new(r#"\{\{\s*#rustdoc\s+([\w:]+)\s*\}\}"#).unwrap();
+                        }
+
+                        let text = text.to_string();
+                        let text = DIRECTIVE_REGEX.replace(&text, |captures: &Captures| {
+                            let path_match = captures
+                                .get(1)
+                                .expect("Bug: capture group not in directive regex");
+                            let item_path =
+                                RustPath::from_str(path_match.as_str()).expect("invalid item path");
+                            find_doc_for_item(&item_path, crate_roots)
+                                .expect("Item not found")
+                                .expect("Bug no doc returned")
+                        });
+                        Ok(Event::Text(text.to_string().into()))
+                    }
+                    ev => Ok(ev),
+                })
+                .collect::<Result<Vec<Event>>>()?
+                .into_iter();
+            pulldown_cmark_to_cmark::cmark(modified_events, &mut new_content, None)?;
+            chapter.content = new_content;
         }
-    } else {
-        let mod_path = match parent_path.file_stem() {
-            Some(n) if n == "lib" => parent_path.with_file_name(format!("{}.rs", the_mod.ident)),
-            _ => bail!(
-                "Don't understand `parent_path` to find mod {}: {}",
-                the_mod.ident,
-                parent_path.to_string_lossy()
-            ),
-        };
-        find_item_in_file(&mod_path, remaining_path)
+        Ok(())
     }
 }
 
-fn find_item_in_file(
-    file_path: &Path,
-    remaining_path: &Option<RustPath>,
-) -> Result<Option<Vec<Attribute>>> {
-    let file_text = std::fs::read_to_string(&file_path)
-        .context(format!("Reading lib.rs at {}", file_path.to_string_lossy()))?;
-
-    let ast =
-        syn::parse_file(&file_text).context(format!("parsing {}", &file_path.to_string_lossy()))?;
-
-    if let Some(remaining_path) = remaining_path {
-        let attrs = ast
-            .items
-            .into_iter()
-            .map(|i| find_attrs_in_item(file_path, &i, remaining_path))
-            .collect::<Result<Vec<Option<Vec<Attribute>>>>>()
-            .context("Error processing file")?
-            .into_iter()
-            .flatten()
-            .next()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Could not find expected item {} in {}",
-                    remaining_path,
-                    file_path.to_string_lossy()
-                )
-            })?;
-        Ok(Some(attrs))
-    } else {
-        Ok(Some(ast.attrs))
-    }
+#[derive(Debug, Clone, Deserialize)]
+struct BookMeta {
+    preprocessor: BookMetaPreprocessor,
 }
 
-fn find_attrs_in_item(
-    parent_path: &Path,
-    item: &Item,
-    remaining_path: &RustPath,
-) -> Result<Option<Vec<Attribute>>> {
-    let (head, tail) = remaining_path.head_tail();
-
-    match item {
-        Item::Struct(s) => {
-            if s.ident == head {
-                find_attrs_in_struct(s, &tail).context(format!("Looking inside struct {}", s.ident))
-            } else {
-                Ok(None)
-            }
-        }
-        Item::Mod(m) => {
-            if m.ident == head {
-                find_attrs_in_mod(parent_path, m, &tail)
-                    .context(format!("Looking inside mod {}", m.ident))
-            } else {
-                Ok(None)
-            }
-        }
-        Item::Impl(_) | Item::Enum(_) | Item::Use(_) => Ok(None),
-        _ => bail!("Unexpected AST item {:?}", item),
-    }
+#[derive(Debug, Clone, Deserialize)]
+struct BookMetaPreprocessor {
+    rustdoc: BookMetaPreprocessorRustDoc,
 }
 
-fn attrs_to_string(attrs: Vec<Attribute>) -> String {
-    attrs
-        .iter()
-        .filter(|attr| attr.path.get_ident().map(ToString::to_string) == Some("doc".to_string()))
-        .map(|attr| {
-            let tokens = &attr.tokens.clone().into_iter().collect::<Vec<_>>();
-            match (tokens.len(), tokens.get(0), tokens.get(1)) {
-                (2, Some(TokenTree::Punct(c)), Some(TokenTree::Literal(l)))
-                    if c.as_char() == '=' =>
-                {
-                    l.to_string()
-                        .trim_matches('b') // byte strings/chars
-                        .trim_matches('"') // strings
-                        .trim_matches('\'') // chars
-                        .trim() // any whitespace
-                        .to_string()
-                }
-                _ => {
-                    panic!("Unexpected format for docstring attribute {:?}", tokens)
-                }
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+#[derive(Debug, Clone, Deserialize)]
+struct BookMetaPreprocessorRustDoc {
+    crates: Vec<String>,
+}
+
+impl mdbook::preprocess::Preprocessor for RustDocPreprocessor {
+    fn name(&self) -> &str {
+        "rust-doc"
+    }
+
+    fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book> {
+        let book_meta_toml =
+            std::fs::read_to_string(ctx.root.join("book.toml")).context("Opening book.toml")?;
+        let book_meta: BookMeta = toml::from_str(&book_meta_toml).context("parsing book.toml")?;
+        let crate_roots = CrateRoots::try_from(book_meta.preprocessor.rustdoc.crates)
+            .context("Reading rustdoc crates config")?;
+
+        book.for_each_mut(|item| Self::process_item(&crate_roots, item).unwrap());
+        Ok(book)
+    }
 }
