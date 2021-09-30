@@ -16,9 +16,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+
+    - name: Install Rust tools
+      uses: actions-rs/toolchain@v1
+      with:
+        components: rustfmt, clippy
+
+    - uses: Swatinem/rust-cache@v1
+
     - name: Install mdbook
       run: cargo install mdbook
+
     - name: Build
       run: cargo build --verbose
+
     - name: Check test book
       run: bin/test-book.sh
