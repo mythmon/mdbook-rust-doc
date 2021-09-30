@@ -1,4 +1,5 @@
 # mdbook-rust-doc
+[![CI](https://github.com/mythmon/mdbook-rust-doc/actions/workflows/rust.yml/badge.svg)](https://github.com/mythmon/mdbook-rust-doc/actions/workflows/rust.yml)
 
 Rust Doc is great for documenting code, but sometimes I found my self needing
 more free-form documentation. The tool [mdBook][] works great for this, but you
