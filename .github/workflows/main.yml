@@ -25,7 +25,10 @@ jobs:
     - uses: Swatinem/rust-cache@v1
 
     - name: Install mdbook
-      run: cargo install mdbook
+      uses: actions-rs/install@v0.1.2
+      with:
+        crate: mdbook
+        version: latest
 
     - name: Build
       run: cargo build --verbose
