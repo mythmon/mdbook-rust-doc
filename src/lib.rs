@@ -102,6 +102,19 @@ fn find_attrs_in_item(
                 Ok(None)
             }
         }
+
+        Item::Use(_) | Item::ForeignMod(_) | Item::ExternCrate(_) => Ok(None),
+
+        Item::Const(_) => bail!("Todo item type: Const"),
+        Item::Fn(_) => bail!("Todo item type: Fn"),
+        Item::Macro(_) => bail!("Todo item type: Macro"),
+        Item::Macro2(_) => bail!("Todo item type: Macro2"),
+        Item::Static(_) => bail!("Todo item type: Static"),
+        Item::Trait(_) => bail!("Todo item type: Trait"),
+        Item::TraitAlias(_) => bail!("Todo item type: TraitAlias"),
+        Item::Type(_) => bail!("Todo item type: Type"),
+        Item::Union(_) => bail!("Todo item type: Union"),
+
         _ => bail!("Unexpected AST item {:?}", item),
     }
 }
