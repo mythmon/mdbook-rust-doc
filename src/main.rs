@@ -90,6 +90,8 @@ impl RustDocPreprocessor {
             let parser =
                 pulldown_cmark::Parser::new_ext(&chapter.content, pulldown_cmark::Options::all());
 
+            let mut any_error = None;
+
             let modified_events = parser
                 .map(|ev| match ev {
                     Event::Text(text) => {
@@ -106,8 +108,13 @@ impl RustDocPreprocessor {
                             let item_path =
                                 RustPath::from_str(path_match.as_str()).expect("invalid item path");
                             find_doc_for_item(&item_path, crate_roots)
-                                .expect("Item not found")
-                                .expect("Bug no doc returned")
+                                .unwrap_or_else(|error| {
+                                    any_error.replace(error);
+                                    None
+                                })
+                                .unwrap_or_else(|| {
+                                    format!("<< No documentation found for {} >>", item_path)
+                                })
                         });
                         Ok(Event::Text(text.to_string().into()))
                     }
@@ -115,6 +122,11 @@ impl RustDocPreprocessor {
                 })
                 .collect::<Result<Vec<Event>>>()?
                 .into_iter();
+
+            if let Some(error) = any_error {
+                return Err(error);
+            }
+
             pulldown_cmark_to_cmark::cmark(modified_events, &mut new_content, None)?;
             chapter.content = new_content;
         }
