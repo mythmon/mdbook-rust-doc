@@ -9,7 +9,8 @@ pub struct RustPath {
 }
 
 impl RustPath {
-    pub fn head_tail(&self) -> (&str, Option<RustPath>) {
+    #[must_use]
+    pub fn head_tail(&self) -> (&str, Option<Self>) {
         match &self.tail {
             None => (self.head.as_str(), None),
             Some(vec) if vec.is_empty() => (self.head.as_str(), None),

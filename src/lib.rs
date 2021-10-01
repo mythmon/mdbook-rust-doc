@@ -144,25 +144,26 @@ fn find_attrs_in_impl(
     the_impl: &ItemImpl,
     remaining_path: &Option<RustPath>,
 ) -> Option<Vec<Attribute>> {
-    if let Some(remaining_path) = remaining_path {
-        if let (head, None) = remaining_path.head_tail() {
-            the_impl
-                .items
-                .iter()
-                .flat_map(|item| match item {
-                    syn::ImplItem::Const(c) if c.ident == head => vec![c.attrs.clone()],
-                    syn::ImplItem::Method(m) if m.sig.ident == head => vec![m.attrs.clone()],
-                    syn::ImplItem::Type(t) if t.ident == head => vec![t.attrs.clone()],
-                    _ => vec![],
-                })
-                .next()
-        } else {
-            // Impl items don't have subitems, so don't bother looking
-            None
-        }
-    } else {
-        Some(the_impl.attrs.clone())
-    }
+    remaining_path.as_ref().map_or_else(
+        || Some(the_impl.attrs.clone()),
+        |remaining_path| {
+            if let (head, None) = remaining_path.head_tail() {
+                the_impl
+                    .items
+                    .iter()
+                    .flat_map(|item| match item {
+                        syn::ImplItem::Const(c) if c.ident == head => vec![c.attrs.clone()],
+                        syn::ImplItem::Method(m) if m.sig.ident == head => vec![m.attrs.clone()],
+                        syn::ImplItem::Type(t) if t.ident == head => vec![t.attrs.clone()],
+                        _ => vec![],
+                    })
+                    .next()
+            } else {
+                // Impl items don't have subitems, so don't bother looking
+                None
+            }
+        },
+    )
 }
 
 fn find_attrs_in_struct(
@@ -186,22 +187,22 @@ fn find_attrs_in_enum(
     the_enum: &ItemEnum,
     remaining_path: &Option<RustPath>,
 ) -> Result<Option<Vec<Attribute>>> {
-    if let Some(remaining_path) = remaining_path {
-        let (head, tail) = remaining_path.head_tail();
-        let rv = the_enum
-            .variants
-            .iter()
-            .find(|v| v.ident == head)
-            .map(|v| find_attrs_in_enum_variant(v, &tail));
-        match rv {
-            Some(Ok(Some(v))) => Ok(Some(v)),
-            Some(Err(err)) => Err(err),
-            Some(Ok(None)) => Ok(None),
-            None => Ok(None),
-        }
-    } else {
-        Ok(Some(the_enum.attrs.clone()))
-    }
+    remaining_path.as_ref().map_or_else(
+        || Ok(Some(the_enum.attrs.clone())),
+        |remaining_path| {
+            let (head, tail) = remaining_path.head_tail();
+            let rv = the_enum
+                .variants
+                .iter()
+                .find(|v| v.ident == head)
+                .map(|v| find_attrs_in_enum_variant(v, &tail));
+            match rv {
+                Some(Ok(Some(v))) => Ok(Some(v)),
+                Some(Err(err)) => Err(err),
+                Some(Ok(None)) | None => Ok(None),
+            }
+        },
+    )
 }
 
 fn find_attrs_in_enum_variant(
