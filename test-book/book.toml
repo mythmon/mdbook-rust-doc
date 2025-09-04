@@ -5,10 +5,8 @@ multilingual = false
 src = "src"
 title = "Test Book"
 
-[output.html]
-
 [output.markdown]
 
 [preprocessor.rustdoc]
-command = "../target/debug/mdbook-rust-doc"
-crates = ["test_crate=../test-crate"]
+command = "target/debug/mdbook-rust-doc"
+crates = ["test_crate=test-crate"]
