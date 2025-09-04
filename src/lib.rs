@@ -259,7 +259,7 @@ fn attrs_to_string(attrs: &[Attribute]) -> String {
             attr.meta.require_name_value().ok().and_then(|nv| {
                 match &nv.value {
                     syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit_str), .. }) => {
-                        Some(lit_str.value())
+                        Some(lit_str.value().trim_start().to_string())
                     }
                     _ => None
                 }
