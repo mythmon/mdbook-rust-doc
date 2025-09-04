@@ -105,7 +105,18 @@ fn find_attrs_in_item(
         Item::Use(_) | Item::ForeignMod(_) | Item::ExternCrate(_) => Ok(None),
 
         Item::Const(_) => bail!("Todo item type: Const"),
-        Item::Fn(_) => bail!("Todo item type: Fn"),
+        Item::Fn(f) => {
+            if f.sig.ident == head {
+                ensure!(
+                    tail.is_none(),
+                    "Function {} has no nested items",
+                    f.sig.ident
+                );
+                Ok(Some(f.attrs.clone()))
+            } else {
+                Ok(None)
+            }
+        }
         Item::Macro(_) => bail!("Todo item type: Macro"),
         Item::Static(_) => bail!("Todo item type: Static"),
         Item::Trait(_) => bail!("Todo item type: Trait"),
