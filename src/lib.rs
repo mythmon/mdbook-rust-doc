@@ -1,7 +1,6 @@
 mod domain;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use proc_macro2::TokenTree;
 use std::{path::Path, string::ToString};
 use syn::{
     Attribute, Fields, FieldsNamed, FieldsUnnamed, Item, ItemEnum, ItemImpl, ItemMod, ItemStruct,
@@ -36,7 +35,7 @@ fn find_item_in_file(
     file_path: &Path,
     remaining_path: &Option<RustPath>,
 ) -> Result<Option<Vec<Attribute>>> {
-    let file_text = std::fs::read_to_string(&file_path)
+    let file_text = std::fs::read_to_string(file_path)
         .context(format!("Reading lib.rs at {}", file_path.to_string_lossy()))?;
 
     let ast =
@@ -108,7 +107,6 @@ fn find_attrs_in_item(
         Item::Const(_) => bail!("Todo item type: Const"),
         Item::Fn(_) => bail!("Todo item type: Fn"),
         Item::Macro(_) => bail!("Todo item type: Macro"),
-        Item::Macro2(_) => bail!("Todo item type: Macro2"),
         Item::Static(_) => bail!("Todo item type: Static"),
         Item::Trait(_) => bail!("Todo item type: Trait"),
         Item::TraitAlias(_) => bail!("Todo item type: TraitAlias"),
@@ -166,7 +164,7 @@ fn find_attrs_in_impl(
                     .iter()
                     .flat_map(|item| match item {
                         syn::ImplItem::Const(c) if c.ident == head => vec![c.attrs.clone()],
-                        syn::ImplItem::Method(m) if m.sig.ident == head => vec![m.attrs.clone()],
+                        syn::ImplItem::Fn(m) if m.sig.ident == head => vec![m.attrs.clone()],
                         syn::ImplItem::Type(t) if t.ident == head => vec![t.attrs.clone()],
                         _ => vec![],
                     })
@@ -256,24 +254,16 @@ fn find_attrs_in_fields(the_fields: &Fields, name: &str) -> Result<Option<Vec<At
 fn attrs_to_string(attrs: &[Attribute]) -> String {
     attrs
         .iter()
-        .filter(|attr| attr.path.get_ident().map(ToString::to_string) == Some("doc".to_string()))
-        .map(|attr| {
-            let tokens = &attr.tokens.clone().into_iter().collect::<Vec<_>>();
-            match (tokens.len(), tokens.get(0), tokens.get(1)) {
-                (2, Some(TokenTree::Punct(c)), Some(TokenTree::Literal(l)))
-                    if c.as_char() == '=' =>
-                {
-                    l.to_string()
-                        .trim_matches('b') // byte strings/chars
-                        .trim_matches('"') // strings
-                        .trim_matches('\'') // chars
-                        .trim() // any whitespace
-                        .to_string()
+        .filter(|attr| attr.path().get_ident().map(ToString::to_string) == Some("doc".to_string()))
+        .filter_map(|attr| {
+            attr.meta.require_name_value().ok().and_then(|nv| {
+                match &nv.value {
+                    syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit_str), .. }) => {
+                        Some(lit_str.value())
+                    }
+                    _ => None
                 }
-                _ => {
-                    panic!("Unexpected format for docstring attribute {:?}", tokens)
-                }
-            }
+            })
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -285,7 +275,7 @@ fn type_has_name(the_type: &Type, name: &str) -> bool {
             .path
             .segments
             .last()
-            .map_or(false, |segment| segment.ident == name),
+            .is_some_and(|segment| segment.ident == name),
         Type::Reference(reference) => type_has_name(&reference.elem, name),
         _ => false,
     }

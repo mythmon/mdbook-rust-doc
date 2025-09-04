@@ -1,7 +1,7 @@
 use std::{convert::TryFrom, io, process, str::FromStr};
 
 use anyhow::{Context, Result};
-use clap::Clap;
+use clap::Parser;
 use lazy_static::lazy_static;
 use mdbook::{
     book::Book,
@@ -14,13 +14,13 @@ use regex::{Captures, Regex};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 struct Opts {
     #[clap(subcommand)]
     cmd: Option<SubCommand>,
 }
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 enum SubCommand {
     Supports { renderer: String },
 }
@@ -127,7 +127,7 @@ impl RustDocPreprocessor {
                 return Err(error);
             }
 
-            pulldown_cmark_to_cmark::cmark(modified_events, &mut new_content, None)?;
+            pulldown_cmark_to_cmark::cmark(modified_events, &mut new_content)?;
             chapter.content = new_content;
         }
         Ok(())
