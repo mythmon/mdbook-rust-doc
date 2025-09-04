@@ -5,6 +5,8 @@ multilingual = false
 src = "src"
 title = "Test Book"
 
+[output.html]
+
 [output.markdown]
 
 [preprocessor.rustdoc]
